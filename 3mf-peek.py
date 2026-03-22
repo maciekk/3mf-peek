@@ -28,8 +28,12 @@ class BambuMaster:
             if name.endswith(('.config', '.xml')) and 'Metadata' in name:
                 with zf.open(name) as f:
                     content = f.read().decode('utf-8', errors='ignore')
-                    self.settings['walls'] = re.search(r'<wall_loops>(\d+)', content).group(1) if re.search(r'<wall_loops>(\d+)', content) else self.settings['walls']
-                    self.settings['infill'] = re.search(r'<sparse_infill_density>(\d+)', content).group(1) if re.search(r'<sparse_infill_density>(\d+)', content) else self.settings['infill']
+                    m = re.search(r'"wall_loops"\s*:\s*"(\d+)"', content)
+                    if m: self.settings['walls'] = m.group(1)
+                    m = re.search(r'"sparse_infill_density"\s*:\s*"(\d+)', content)
+                    if m: self.settings['infill'] = m.group(1)
+                    m = re.search(r'"close_fan_the_first_x_layers"\s*:\s*\[\s*"(\d+)"', content)
+                    if m: self.settings['no_fan_layers'] = m.group(1)
 
     def process(self, mode='flow', max_layers=10):
         with zipfile.ZipFile(self.file_path, 'r') as z:
@@ -38,7 +42,6 @@ class BambuMaster:
                 x, y, e, f_speed = 0.0, 0.0, 0.0, 0.0
                 layer_count = 0
                 current_tool = "T0"
-                fan_active = False
 
                 for line in f:
                     l = line.decode('utf-8').strip()
@@ -50,14 +53,10 @@ class BambuMaster:
                         if t_match: current_tool = f"T{t_match.group(1)}"
                     if ";LAYER_CHANGE" in l: layer_count += 1
 
-                    # 2. Temperature & Fan Logic
-                    if "M140" in l and not self.settings['temp_init']:
+                    # 2. Temperature Logic (skip comment lines)
+                    if l.startswith("M140") and not self.settings['temp_init']:
                         s = re.search(r'S(\d+)', l)
                         if s: self.settings['temp_init'] = s.group(1)
-                    if not fan_active and "M106" in l and "S" in l:
-                        if int(re.search(r'S(\d+)', l).group(1)) > 0:
-                            self.settings['no_fan_layers'] = layer_count
-                            fan_active = True
 
                     # 3. Path & Math
                     if l.startswith("G1"):
