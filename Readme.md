@@ -7,7 +7,7 @@ An idea developed with Google Gemini initially (1st commit), although quite bugg
 Currently it:
 - prints interesting, commonly used stats (e.g., wall loops)
 
-<img src="screenshots/basic-dump.png" width="300">
+<img src="screenshots/basic-dump.png" width="500">
 
 - plots the first N levels of gcode in matplotlib
 
