@@ -6,11 +6,23 @@ An idea developed with Google Gemini initially (1st commit), although quite bugg
 
 Currently it:
 - prints interesting, commonly used stats (e.g., wall loops)
+
+![basic stats](screenshots/basic-dump.png)
+
 - plots the first N levels of gcode in matplotlib
+
+![matplotlib](screenshots/matplotlib-plot.png)
+
 - dumps G-code with human-readable annotations as a Markdown table (`--dump-gcode [N]`):
   ```bash
-  python3 3mf-peek.py --dump-gcode 1000 example.gcode.3mf | glow -w 160
+  python3 3mf-peek.py --dump-gcode 1000 example1.gcode.3mf | glow -w 160
   ```
+
+![gcode_dump](screenshots/dump-gcode.png)
+
+- dumps per layer summaries (`--layer-summary`):
+
+![layer summary](screenshots/layer-summary.png)
 
 Refs:
 - example1.gcode.3mf is a modified, SLICED version of 3mf from:
