@@ -191,6 +191,144 @@ class BambuMaster:
                 return price
         return self.prices['bambu']
 
+    def dump_gcode(self, n=100):
+        """Print first N lines of G-code with human-readable annotations in Markdown."""
+        annotations = {
+            'G28': 'Home all axes',
+            'G90': 'Set absolute positioning',
+            'G91': 'Set relative positioning',
+            'G92': 'Set position (reset coordinate)',
+            'M82': 'Set extruder to absolute mode',
+            'M83': 'Set extruder to relative mode',
+            'M104': 'Set hotend temperature (no wait)',
+            'M109': 'Set hotend temperature and wait',
+            'M140': 'Set bed temperature (no wait)',
+            'M190': 'Set bed temperature and wait',
+            'M106': 'Set part cooling fan speed',
+            'M107': 'Turn off part cooling fan',
+            'M204': 'Set acceleration',
+            'M205': 'Set jerk / advanced settings',
+            'M220': 'Set feedrate override percentage',
+            'M221': 'Set flow rate override percentage',
+            'M400': 'Wait for moves to finish',
+            'M900': 'Set linear advance (pressure advance)',
+            'M1002': 'Bambu: judge last / gcode claim speed',
+            'M620': 'Bambu: AMS filament change start',
+            'M621': 'Bambu: AMS filament change end',
+            'M622': 'Bambu: conditional block start',
+            'M623': 'Bambu: conditional block end',
+            'M625': 'Bambu: conditional block (else)',
+            'M73': 'Set print progress',
+            'M201': 'Set max acceleration per axis',
+            'M203': 'Set max feedrate per axis',
+            'M993': 'Bambu: nozzle cam detection setting',
+            'M960': 'Bambu: LED/lighting control',
+            'M412': 'Filament runout detection',
+            'M142': 'Bambu: set chamber/aux heater',
+            'G29': 'Auto bed leveling',
+            'G0': 'Rapid move (travel, no extrusion)',
+            'G1': 'Linear move',
+            'G2': 'Clockwise arc move',
+            'G3': 'Counter-clockwise arc move',
+            'G4': 'Dwell (pause)',
+        }
+
+        with zipfile.ZipFile(self.file_path, 'r') as z:
+            with z.open('Metadata/plate_1.gcode') as f:
+                lines = []
+                for raw in f:
+                    lines.append(raw.decode('utf-8').rstrip('\n\r'))
+                    if len(lines) >= n:
+                        break
+
+        print(f"## G-code dump — first {len(lines)} lines\n")
+        print("| Line | G-code | Annotation |")
+        print("|-----:|--------|------------|")
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            display = stripped.replace('|', '\\|')  # escape pipes for Markdown
+
+            if not stripped:
+                print(f"| {i} | | |")
+                continue
+            elif stripped.startswith(';'):
+                comment_text = stripped.lstrip('; ').strip()
+                annotation = f'&nbsp;&nbsp;; *{comment_text}*'
+            else:
+                annotation = self._annotate_gcode_line(stripped, annotations)
+
+            print(f"| {i} | `{display}` | {annotation} |")
+
+    @staticmethod
+    def _annotate_gcode_line(line, annotations):
+        """Produce a human-readable annotation for a single G-code line."""
+        # Strip inline comment
+        code_part = line.split(';')[0].strip()
+        inline_comment = line.split(';', 1)[1].strip() if ';' in line else None
+
+        # Match command word
+        cmd_match = re.match(r'([GMT]\d+)', code_part)
+        if not cmd_match:
+            # Could be a bare tool change like T0, T1
+            t_match = re.match(r'T(\d+)', code_part)
+            if t_match:
+                desc = f'Switch to tool/extruder {t_match.group(1)} (AMS slot)'
+            else:
+                desc = '*(unknown)*'
+            if inline_comment:
+                desc += f' — *{inline_comment}*'
+            return desc
+
+        cmd = cmd_match.group(1)
+        base = annotations.get(cmd, f'{cmd} command')
+
+        # Add parameter details for common commands
+        params = code_part[len(cmd):].strip()
+        detail_parts = []
+
+        if cmd in ('G0', 'G1'):
+            coord_map = {'X': 'X', 'Y': 'Y', 'Z': 'Z', 'E': 'extrude', 'F': 'feedrate'}
+            for m in re.finditer(r'([XYZEF])(-?\d*\.?\d+)', params):
+                letter, val = m.group(1), m.group(2)
+                name = coord_map.get(letter, letter)
+                if letter == 'F':
+                    detail_parts.append(f'{name}={val} mm/min')
+                elif letter == 'E':
+                    detail_parts.append(f'{name}={val}')
+                else:
+                    detail_parts.append(f'{name}={val}mm')
+        elif cmd in ('M104', 'M109', 'M140', 'M190'):
+            s = re.search(r'S(\d+)', params)
+            if s:
+                detail_parts.append(f'{s.group(1)}°C')
+        elif cmd == 'M106':
+            s = re.search(r'S(\d+)', params)
+            p = re.search(r'P(\d+)', params)
+            if p:
+                detail_parts.append(f'fan {p.group(1)}')
+            if s:
+                pct = round(int(s.group(1)) / 255 * 100)
+                detail_parts.append(f'{pct}%')
+        elif cmd == 'G92':
+            for m in re.finditer(r'([XYZE])(-?\d*\.?\d+)', params):
+                detail_parts.append(f'{m.group(1)}={m.group(2)}')
+        elif cmd == 'M204':
+            s = re.search(r'S(\d+)', params)
+            if s:
+                detail_parts.append(f'{s.group(1)} mm/s²')
+        elif cmd == 'G4':
+            s = re.search(r'[SP](\d+)', params)
+            if s:
+                detail_parts.append(f'{s.group(1)}ms')
+
+        desc = base
+        if detail_parts:
+            desc += f' ({", ".join(detail_parts)})'
+        if inline_comment:
+            desc += f' — *{inline_comment}*'
+        return desc
+
     def print_report(self):
         s = self.settings
         print(f"\n--- 🖨️  PRINT BASICS ---")
@@ -230,9 +368,15 @@ if __name__ == "__main__":
     parser.add_argument("file", help="Path to .3mf")
     parser.add_argument("--mode", choices=['flow', 'speed'], default='flow')
     parser.add_argument("--layers", type=int, default=5)
+    parser.add_argument("--dump-gcode", type=int, nargs='?', const=100, default=None,
+                        metavar='N', help="Dump first N lines of G-code with annotations (default: 100)")
     args = parser.parse_args()
 
     bm = BambuMaster(args.file)
-    bm.process(mode=args.mode, max_layers=args.layers)
-    bm.print_report()
-    bm.visualize(mode=args.mode)
+
+    if args.dump_gcode is not None:
+        bm.dump_gcode(n=args.dump_gcode)
+    else:
+        bm.process(mode=args.mode, max_layers=args.layers)
+        bm.print_report()
+        bm.visualize(mode=args.mode)
