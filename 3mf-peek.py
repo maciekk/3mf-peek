@@ -35,6 +35,7 @@ class BambuMaster:
         self.ams_mapping = {}  # Tool ID -> {"type": str, "usage": float(g)}
         self.segments = []
         self.metrics = []  # Can store speed or flow depending on arg
+        self.layer_stats = []  # Per-layer statistics for layer summary mode
 
     @staticmethod
     def _get_val(data, key):
@@ -138,7 +139,7 @@ class BambuMaster:
                     if l.startswith("T"):
                         t_match = re.match(r'T(\d+)', l)
                         if t_match: current_tool = f"T{t_match.group(1)}"
-                    if ";LAYER_CHANGE" in l: layer_count += 1
+                    if "CHANGE_LAYER" in l: layer_count += 1
 
                     # 2. Temperature Logic (skip comment lines)
                     if l.startswith("M140") and not self.settings['temp_init']:
@@ -363,6 +364,118 @@ class BambuMaster:
             print(f"{t}: {data['usage']:.2f}g ({vendor}) ~${cost:.2f} CAD")
         print(f"TOTAL ESTIMATED COST: ${total_cost:.2f} CAD\n")
 
+    def process_layers(self):
+        """Parse G-code and collect per-layer statistics."""
+        with zipfile.ZipFile(self.file_path, 'r') as z:
+            self._parse_metadata(z)
+            with z.open('Metadata/plate_1.gcode') as f:
+                x, y, e, f_speed = 0.0, 0.0, 0.0, 0.0
+                current_tool = "T0"
+                current_z = 0.0
+                layer = None  # no layer yet
+
+                for line in f:
+                    l = line.decode('utf-8').strip()
+                    if not l:
+                        continue
+
+                    # Tool changes
+                    if l.startswith("T"):
+                        t_match = re.match(r'T(\d+)', l)
+                        if t_match:
+                            current_tool = f"T{t_match.group(1)}"
+
+                    # Layer change — start a new layer
+                    if "CHANGE_LAYER" in l:
+                        layer = {
+                            'z': current_z, 'filament_mm': 0.0, 'filament_g': 0.0,
+                            'extrusion_dist': 0.0, 'travel_dist': 0.0,
+                            'time_s': 0.0, 'moves': 0, 'extrusion_moves': 0,
+                            'max_speed': 0.0, 'speed_sum': 0.0,
+                            'tools_used': set(),
+                        }
+                        self.layer_stats.append(layer)
+
+                    # Track Z from G1/G0 moves
+                    if l.startswith("G1") or l.startswith("G0"):
+                        coords = {m.group(0)[0]: float(m.group(0)[1:]) for m in re.finditer(r'[XYZEF]-?\d*\.?\d+', l)}
+                        nx = coords.get('X', x)
+                        ny = coords.get('Y', y)
+                        nz = coords.get('Z', current_z)
+                        ne = coords.get('E', e)
+                        nf = coords.get('F', f_speed)
+
+                        if nz != current_z:
+                            current_z = nz
+                            if layer is not None:
+                                layer['z'] = current_z
+
+                        dist = math.sqrt((nx - x) ** 2 + (ny - y) ** 2)
+                        de = ne - e
+
+                        if layer is not None and dist > 0:
+                            speed_mms = nf / 60 if nf > 0 else 0
+                            if speed_mms > 0:
+                                layer['time_s'] += dist / speed_mms
+                            layer['moves'] += 1
+
+                            if de > 0:
+                                layer['extrusion_moves'] += 1
+                                layer['extrusion_dist'] += dist
+                                layer['filament_mm'] += de
+                                layer['filament_g'] += (de * self.filament_area * self.filament_density) / 1000
+                                layer['tools_used'].add(current_tool)
+                                if speed_mms > layer['max_speed']:
+                                    layer['max_speed'] = speed_mms
+                                layer['speed_sum'] += speed_mms
+                            else:
+                                layer['travel_dist'] += dist
+
+                        x, y, e, f_speed = nx, ny, ne, nf
+
+    def print_layer_summary(self):
+        """Print per-layer statistics table."""
+        if not self.layer_stats:
+            print("No layer data found.")
+            return
+
+        total_layers = len(self.layer_stats)
+        print(f"\n--- Layer Summary ({total_layers} layers total) ---\n")
+
+        # Header
+        print(f"{'Layer':>5}  {'Z mm':>6}  {'Filament':>9}  {'Time':>8}  "
+              f"{'Ext Dist':>9}  {'Moves':>5}  {'Avg Spd':>7}  {'Max Spd':>7}  {'Tools'}")
+        print(f"{'':->5}  {'':->6}  {'':->9}  {'':->8}  "
+              f"{'':->9}  {'':->5}  {'':->7}  {'':->7}  {'':->5}")
+
+        total_filament = 0.0
+        total_time = 0.0
+
+        for i, s in enumerate(self.layer_stats):
+            total_filament += s['filament_g']
+            total_time += s['time_s']
+
+            avg_speed = (s['speed_sum'] / s['extrusion_moves']) if s['extrusion_moves'] > 0 else 0
+            time_str = self._format_time(s['time_s'])
+            tools = ','.join(sorted(s['tools_used'])) if s['tools_used'] else '-'
+
+            print(f"{i:>5}  {s['z']:>6.2f}  {s['filament_g']:>7.2f}g  {time_str:>8}  "
+                  f"{s['extrusion_dist']:>7.1f}mm  {s['extrusion_moves']:>5}  "
+                  f"{avg_speed:>5.0f}mm/s  {s['max_speed']:>5.0f}mm/s  {tools}")
+
+        print(f"\n{'TOTAL':>5}  {'':>6}  {total_filament:>7.2f}g  {self._format_time(total_time):>8}")
+
+    @staticmethod
+    def _format_time(seconds):
+        """Format seconds into a compact time string."""
+        if seconds < 60:
+            return f"{seconds:.0f}s"
+        m, s = divmod(int(seconds), 60)
+        if m < 60:
+            return f"{m}m{s:02d}s"
+        h, m = divmod(m, 60)
+        return f"{h}h{m:02d}m"
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("file", help="Path to .3mf")
@@ -370,12 +483,17 @@ if __name__ == "__main__":
     parser.add_argument("--layers", type=int, default=5)
     parser.add_argument("--dump-gcode", type=int, nargs='?', const=100, default=None,
                         metavar='N', help="Dump first N lines of G-code with annotations (default: 100)")
+    parser.add_argument("--layer-summary", action='store_true',
+                        help="Print per-layer statistics (filament, time, speed, etc.)")
     args = parser.parse_args()
 
     bm = BambuMaster(args.file)
 
     if args.dump_gcode is not None:
         bm.dump_gcode(n=args.dump_gcode)
+    elif args.layer_summary:
+        bm.process_layers()
+        bm.print_layer_summary()
     else:
         bm.process(mode=args.mode, max_layers=args.layers)
         bm.print_report()
