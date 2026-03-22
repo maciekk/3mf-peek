@@ -93,7 +93,6 @@ class BambuMaster:
 
         fig, ax = plt.subplots(figsize=(10, 8))
         line = ax.add_collection(lc)
-        fig.colorbar(line, ax=ax, label=label)
         ax.set_xlim(0, 256); ax.set_ylim(0, 256)
         ax.set_title(f"Bambu P2S Diagnostic: {mode.capitalize()}")
         plt.show()
