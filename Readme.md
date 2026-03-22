@@ -13,6 +13,8 @@ Currently it:
   ```
 
 Refs:
-- example.gcode.3mf is a modified, SLICED version of 3mf from
+- example1.gcode.3mf is a modified, SLICED version of 3mf from:
   https://makerworld.com/en/models/1889081-geometric-line-art-bookmarks
+- example2.gcode.3mf is SLICED version of 3mf from:
+  https://makerworld.com/en/models/511342-bambu-lab-p1s-x1-x1c-door-handle-bed-scraper
 
