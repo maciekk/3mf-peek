@@ -61,7 +61,7 @@ class BambuMaster:
 
                     # 3. Path & Math
                     if l.startswith("G1"):
-                        coords = {m.group(0)[0]: float(m.group(0)[1:]) for m in re.finditer(r'[XYEF]\d+\.?\d*', l)}
+                        coords = {m.group(0)[0]: float(m.group(0)[1:]) for m in re.finditer(r'[XYEF]-?\d*\.?\d+', l)}
                         nx, ny, ne, nf = coords.get('X', x), coords.get('Y', y), coords.get('E', e), coords.get('F', f_speed)
 
                         dist = math.sqrt((nx-x)**2 + (ny-y)**2)
