@@ -1,0 +1,31 @@
+# --- Python & Tooling ---
+.venv/
+__pycache__/
+*.pyc
+.uv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# --- 3D Printing & CAD (High token cost, zero logic value) ---
+# These are binary or massive text files Claude cannot "reason" about effectively
+*.3mf
+*.stl
+*.gcode
+*.step
+*.obj
+*.f3d
+
+# --- RAG & Data (Crucial for your Local Doc Engine) ---
+# Don't let Claude index your actual vector database or raw ingestion data
+data/
+storage/
+*.db
+*.sqlite
+.chroma/
+indices/
+
+# --- Environment & Secrets ---
+.env
+.env.*
+secrets.yaml
